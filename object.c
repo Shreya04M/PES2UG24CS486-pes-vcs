@@ -190,7 +190,19 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    // Next commit: fsync() the shard directory to persist the rename.
+    // Step 8: fsync() the shard directory to persist the rename
+    int dirfd = open(dir, O_RDONLY);
+    if (dirfd < 0) {
+        free(full);
+        return -1;
+    }
+    if (fsync(dirfd) < 0) {
+        close(dirfd);
+        free(full);
+        return -1;
+    }
+    close(dirfd);
+
     free(full);
     return 0;
 }
