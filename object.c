@@ -9,7 +9,6 @@
 // TODO functions:     object_write, object_read
 
 #include "pes.h"
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,12 +92,15 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
+    (void)id_out; // will be used in step 2
+
     const char *type_str;
     if (type == OBJ_BLOB) type_str = "blob";
     else if (type == OBJ_TREE) type_str = "tree";
     else if (type == OBJ_COMMIT) type_str = "commit";
     else return -1;
 
+    // Step 1: build the in-memory object buffer: "<type> <size>\0<data>"
     char header[64];
     int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
     if (header_len < 0 || header_len >= (int)sizeof(header)) return -1;
@@ -107,86 +109,13 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     unsigned char *full = malloc(total_size);
     if (!full) return -1;
 
-    memcpy(full, header, header_len);
+    memcpy(full, header, (size_t)header_len);
     full[header_len] = '\0';
-    memcpy(full + header_len + 1, data, len);
+    memcpy(full + (size_t)header_len + 1, data, len);
 
-    compute_hash(full, total_size, id_out);
-    if (object_exists(id_out)) {
-        free(full);
-        return 0;
-    }
-
-    char path[512];
-    object_path(id_out, path, sizeof(path));
-
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s", path);
-    char *slash = strrchr(dir, '/');
-    if (!slash) {
-        free(full);
-        return -1;
-    }
-    *slash = '\0';
-
-    if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
-        free(full);
-        return -1;
-    }
-
-    char hex[HASH_HEX_SIZE + 1];
-    hash_to_hex(id_out, hex);
-    char temp_path[576];
-    int temp_len = snprintf(temp_path, sizeof(temp_path), "%s/.tmp_%s", dir, hex + 2);
-    if (temp_len < 0 || temp_len >= (int)sizeof(temp_path)) {
-        free(full);
-        return -1;
-    }
-
-    int fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) {
-        free(full);
-        return -1;
-    }
-
-    ssize_t written = write(fd, full, total_size);
-    if (written != (ssize_t)total_size || fsync(fd) < 0) {
-        int saved_errno = errno;
-        close(fd);
-        unlink(temp_path);
-        free(full);
-        errno = saved_errno;
-        return -1;
-    }
-
-    if (close(fd) < 0) {
-        unlink(temp_path);
-        free(full);
-        return -1;
-    }
-
-    if (rename(temp_path, path) < 0) {
-        unlink(temp_path);
-        free(full);
-        return -1;
-    }
-
-    int dirfd = open(dir, O_RDONLY);
-    if (dirfd < 0) {
-        free(full);
-        return -1;
-    }
-    if (fsync(dirfd) < 0) {
-        int saved_errno = errno;
-        close(dirfd);
-        free(full);
-        errno = saved_errno;
-        return -1;
-    }
-    close(dirfd);
-
+    // Next commit: hash `full` and continue with dedup + atomic write.
     free(full);
-    return 0;
+    return -1;
 }
 
 // Read an object from the store.
