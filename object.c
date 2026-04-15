@@ -94,6 +94,29 @@ int object_exists(const ObjectID *id) {
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     // TODO: Implement
     (void)type; (void)data; (void)len; (void)id_out;
+    // Step 1: convert type enum to string
+    const char *type_str;
+    if (type == OBJ_BLOB) type_str = "blob";
+    else if (type == OBJ_TREE) type_str = "tree";
+    else if (type == OBJ_COMMIT) type_str = "commit";
+    else return -1;
+
+    // Step 2: create header
+    char header[64];
+    int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
+
+    // Step 3: allocate full object buffer
+    size_t total_size = header_len + 1 + len;
+    unsigned char *full = malloc(total_size);
+    if (!full) return -1;
+
+    // Step 4: copy header + null + data
+    memcpy(full, header, header_len);
+    full[header_len] = '\0';
+    memcpy(full + header_len + 1, data, len);
+
+    // TEMP RETURN (we haven't implemented rest yet)
+    free(full);
     return -1;
 }
 
