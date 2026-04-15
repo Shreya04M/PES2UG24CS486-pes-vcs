@@ -151,6 +151,53 @@ int index_load(Index *index) {
     if (!f) {
         if (errno == ENOENT) {
             index->count = 0;
+            index->entries = NULL;
+            return 0;
+        }
+        return -1;
+    }
+
+    index->count = 0;
+    index->entries = NULL;
+
+    while (1) {
+        IndexEntry e;
+        char hex[HASH_HEX_SIZE + 1];
+
+        if (fscanf(f, "%o %64s %llu %u %s",
+                   &e.mode,
+                   hex,
+                   &e.mtime_sec,
+                   &e.size,
+                   e.path) != 5) {
+            break;
+        }
+
+        if (hex_to_hash(hex, &e.hash) != 0) {
+            fclose(f);
+            return -1;
+        }
+
+        // 🔥 allocate memory
+        IndexEntry *new_entries = realloc(index->entries, (index->count + 1) * sizeof(IndexEntry));
+        if (!new_entries) {
+            fclose(f);
+            return -1;
+        }
+
+        index->entries = new_entries;
+        index->entries[index->count++] = e;
+    }
+
+    fclose(f);
+    return 0;
+}
+    if (!index) return -1;
+
+    FILE *f = fopen(INDEX_FILE, "r");
+    if (!f) {
+        if (errno == ENOENT) {
+            index->count = 0;
             return 0;
         }
         return -1;
@@ -181,7 +228,6 @@ int index_load(Index *index) {
 
     fclose(f);
     return 0;
-}
 
 // Save the index to .pes/index atomically.
 //
