@@ -125,7 +125,9 @@ object_path(id_out, path, sizeof(path));
 
 // Extract directory path (.pes/objects/XX)
 char dir[512];
-strncpy(dir, path, sizeof(dir));
+//strncpy(dir, path, sizeof(dir));
+snprintf(dir, sizeof(dir), "%s", path);
+
 char *slash = strrchr(dir, '/');
 if (!slash) {
     free(full);
