@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-PES="./pes"
+PES="$(pwd)/pes"
 TEST_DIR="$(mktemp -d)"
 
 cleanup() {

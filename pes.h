@@ -59,4 +59,19 @@ static inline const char* pes_author(void) {
     return (env && env[0]) ? env : DEFAULT_AUTHOR;
 }
 
+// ─── CLI Commands (implemented in commit.c) ─────────────────────────────
+
+void cmd_init(void);
+void cmd_add(int argc, char *argv[]);
+void cmd_status(void);
+void cmd_commit(int argc, char *argv[]);
+void cmd_log(void);
+
+// ─── Branch/Checkout (implemented in commit.c) ──────────────────────────
+
+int branch_list(void);
+int branch_create(const char *name);
+int branch_delete(const char *name);
+int checkout(const char *target);
+
 #endif // PES_H

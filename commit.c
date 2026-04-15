@@ -24,6 +24,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <dirent.h>
 
 // Forward declarations (implemented in object.c)
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
@@ -228,4 +231,195 @@ int commit_create(const char *message, ObjectID *commit_id_out) {
 
     *commit_id_out = commit_id;
     return 0;
+}
+
+// ─── CLI commands (needed by pes.c) ───────────────────────────────────────
+
+static int ensure_dir(const char *path, mode_t mode) {
+    if (mkdir(path, mode) == 0) return 0;
+    if (errno == EEXIST) return 0;
+    return -1;
+}
+
+static int write_file_atomic(const char *path, const char *contents) {
+    char tmp[512];
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) return -1;
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    if (fprintf(f, "%s", contents) < 0) { fclose(f); unlink(tmp); return -1; }
+    if (fflush(f) != 0) { fclose(f); unlink(tmp); return -1; }
+    if (fsync(fileno(f)) != 0) { fclose(f); unlink(tmp); return -1; }
+    if (fclose(f) != 0) { unlink(tmp); return -1; }
+    if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
+void cmd_init(void) {
+    if (ensure_dir(PES_DIR, 0755) != 0) {
+        fprintf(stderr, "error: failed to create %s\n", PES_DIR);
+        return;
+    }
+    if (ensure_dir(OBJECTS_DIR, 0755) != 0) {
+        fprintf(stderr, "error: failed to create %s\n", OBJECTS_DIR);
+        return;
+    }
+    if (ensure_dir(".pes/refs", 0755) != 0) {
+        fprintf(stderr, "error: failed to create .pes/refs\n");
+        return;
+    }
+    if (ensure_dir(REFS_DIR, 0755) != 0) {
+        fprintf(stderr, "error: failed to create %s\n", REFS_DIR);
+        return;
+    }
+
+    if (write_file_atomic(HEAD_FILE, "ref: refs/heads/main\n") != 0) {
+        fprintf(stderr, "error: failed to write %s\n", HEAD_FILE);
+        return;
+    }
+
+    // Ensure the main branch file exists (may remain empty until first commit)
+    int fd = open(".pes/refs/heads/main", O_CREAT | O_WRONLY, 0644);
+    if (fd >= 0) close(fd);
+}
+
+void cmd_add(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Usage: pes add <file>...\n");
+        return;
+    }
+
+    Index idx;
+    if (index_load(&idx) != 0) {
+        fprintf(stderr, "error: failed to load index\n");
+        return;
+    }
+
+    for (int i = 2; i < argc; i++) {
+        if (index_add(&idx, argv[i]) != 0) {
+            fprintf(stderr, "error: failed to add '%s'\n", argv[i]);
+            return;
+        }
+    }
+}
+
+void cmd_status(void) {
+    Index idx;
+    if (index_load(&idx) != 0) {
+        fprintf(stderr, "error: failed to load index\n");
+        return;
+    }
+    (void)index_status(&idx);
+}
+
+void cmd_commit(int argc, char *argv[]) {
+    const char *msg = NULL;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            msg = argv[i + 1];
+            break;
+        }
+    }
+    if (!msg) {
+        fprintf(stderr, "Usage: pes commit -m <msg>\n");
+        return;
+    }
+
+    ObjectID id;
+    if (commit_create(msg, &id) != 0) {
+        fprintf(stderr, "error: commit failed\n");
+        return;
+    }
+
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(&id, hex);
+    printf("Committed %s\n", hex);
+}
+
+static void log_callback(const ObjectID *id, const Commit *commit, void *ctx) {
+    (void)ctx;
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id, hex);
+    printf("commit %s\n", hex);
+    printf("Author: %s\n", commit->author);
+    printf("Date:   %" PRIu64 "\n\n", commit->timestamp);
+    printf("    %s\n\n", commit->message);
+}
+
+void cmd_log(void) {
+    if (commit_walk(log_callback, NULL) != 0) {
+        fprintf(stderr, "error: no commits yet\n");
+    }
+}
+
+// ─── Branch + checkout (minimal implementations) ─────────────────────────
+
+int branch_list(void) {
+    DIR *d = opendir(REFS_DIR);
+    if (!d) return -1;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        printf("%s\n", ent->d_name);
+    }
+    closedir(d);
+    return 0;
+}
+
+int branch_create(const char *name) {
+    if (!name || !name[0]) return -1;
+    if (strchr(name, '/') != NULL) return -1;
+
+    if (ensure_dir(".pes/refs", 0755) != 0) return -1;
+    if (ensure_dir(REFS_DIR, 0755) != 0) return -1;
+
+    char path[512];
+    if (snprintf(path, sizeof(path), "%s/%s", REFS_DIR, name) >= (int)sizeof(path)) return -1;
+
+    // Write current HEAD commit (if any), else create empty branch file.
+    ObjectID head;
+    if (head_read(&head) == 0) {
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&head, hex);
+        char buf[80];
+        snprintf(buf, sizeof(buf), "%s\n", hex);
+        return write_file_atomic(path, buf);
+    }
+
+    int fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0644);
+    if (fd < 0) return -1;
+    close(fd);
+    return 0;
+}
+
+int branch_delete(const char *name) {
+    if (!name || !name[0]) return -1;
+    char path[512];
+    if (snprintf(path, sizeof(path), "%s/%s", REFS_DIR, name) >= (int)sizeof(path)) return -1;
+    return unlink(path);
+}
+
+int checkout(const char *target) {
+    if (!target || !target[0]) return -1;
+
+    // If a branch exists, switch HEAD to that symbolic ref.
+    char ref_path[512];
+    if (snprintf(ref_path, sizeof(ref_path), "%s/%s", REFS_DIR, target) < (int)sizeof(ref_path)) {
+        if (access(ref_path, F_OK) == 0) {
+            char head_contents[512];
+            if (snprintf(head_contents, sizeof(head_contents), "ref: refs/heads/%s\n", target) >= (int)sizeof(head_contents)) return -1;
+            return write_file_atomic(HEAD_FILE, head_contents);
+        }
+    }
+
+    // Otherwise, treat as commit hash (detached HEAD).
+    if (strlen(target) != HASH_HEX_SIZE) return -1;
+    for (size_t i = 0; i < HASH_HEX_SIZE; i++) {
+        char c = target[i];
+        int is_hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!is_hex) return -1;
+    }
+
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%s\n", target);
+    return write_file_atomic(HEAD_FILE, buf);
 }
