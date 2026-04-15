@@ -9,6 +9,7 @@
 // TODO functions:     object_write, object_read
 
 #include "pes.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,7 +123,25 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return 0;
     }
 
-    // Next commit: dedup check and on-disk atomic write.
+    // Step 4: ensure the shard directory exists (.pes/objects/XX/)
+    char path[512];
+    object_path(id_out, path, sizeof(path));
+
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) {
+        free(full);
+        return -1;
+    }
+    *slash = '\0';
+
+    if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
+        free(full);
+        return -1;
+    }
+
+    // Next commit: write to temp file + fsync + rename.
     free(full);
     return -1;
 }
