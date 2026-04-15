@@ -92,7 +92,7 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    (void)id_out; // will be used in step 2
+    if (!id_out) return -1;
 
     const char *type_str;
     if (type == OBJ_BLOB) type_str = "blob";
@@ -113,7 +113,10 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     full[header_len] = '\0';
     memcpy(full + (size_t)header_len + 1, data, len);
 
-    // Next commit: hash `full` and continue with dedup + atomic write.
+    // Step 2: hash the FULL object (header + '\0' + data)
+    compute_hash(full, total_size, id_out);
+
+    // Next commit: dedup check and on-disk atomic write.
     free(full);
     return -1;
 }
