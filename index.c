@@ -25,6 +25,15 @@
 #include <unistd.h>
 #include <dirent.h>
 
+// Forward declaration (implemented in object.c)
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+
+static int compare_index_entries_by_path(const void *a, const void *b) {
+    const IndexEntry *ea = (const IndexEntry *)a;
+    const IndexEntry *eb = (const IndexEntry *)b;
+    return strcmp(ea->path, eb->path);
+}
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -185,10 +194,61 @@ int index_load(Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    if (!index) return -1;
+
+    if (mkdir(PES_DIR, 0755) < 0 && errno != EEXIST) return -1;
+
+    Index sorted = *index;
+    if (sorted.count > 1) {
+        qsort(sorted.entries, (size_t)sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
+    }
+
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
+
+    FILE *f = fopen(tmp_path, "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < sorted.count; i++) {
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&sorted.entries[i].hash, hex);
+        if (fprintf(f, "%o %s %llu %u %s\n",
+                    sorted.entries[i].mode,
+                    hex,
+                    (unsigned long long)sorted.entries[i].mtime_sec,
+                    (unsigned int)sorted.entries[i].size,
+                    sorted.entries[i].path) < 0) {
+            fclose(f);
+            unlink(tmp_path);
+            return -1;
+        }
+    }
+
+    if (fflush(f) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    if (fsync(fileno(f)) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    if (fclose(f) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (rename(tmp_path, INDEX_FILE) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    int dirfd = open(PES_DIR, O_RDONLY);
+    if (dirfd < 0) return -1;
+    int rc = fsync(dirfd);
+    close(dirfd);
+    return (rc == 0) ? 0 : -1;
 }
 
 // Stage a file for the next commit.
@@ -201,8 +261,58 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    if (!index || !path || !path[0]) return -1;
+
+    struct stat st;
+    if (lstat(path, &st) != 0) return -1;
+    if (!S_ISREG(st.st_mode)) return -1;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    size_t len = (size_t)st.st_size;
+    void *buf = NULL;
+    if (len == 0) {
+        buf = malloc(1);
+        if (!buf) {
+            fclose(f);
+            return -1;
+        }
+    } else {
+        buf = malloc(len);
+        if (!buf) {
+            fclose(f);
+            return -1;
+        }
+        if (fread(buf, 1, len, f) != len) {
+            free(buf);
+            fclose(f);
+            return -1;
+        }
+    }
+    fclose(f);
+
+    ObjectID blob;
+    if (object_write(OBJ_BLOB, buf, len, &blob) != 0) {
+        free(buf);
+        return -1;
+    }
+    free(buf);
+
+    uint32_t mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
+
+    IndexEntry *e = index_find(index, path);
+    if (!e) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        e = &index->entries[index->count++];
+        int n = snprintf(e->path, sizeof(e->path), "%s", path);
+        if (n < 0 || n >= (int)sizeof(e->path)) return -1;
+    }
+
+    e->mode = mode;
+    e->hash = blob;
+    e->mtime_sec = (uint64_t)st.st_mtime;
+    e->size = (uint32_t)st.st_size;
+
+    return index_save(index);
 }
