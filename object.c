@@ -9,6 +9,7 @@
 // TODO functions:     object_write, object_read
 
 #include "pes.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,66 +93,98 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    // Step 1: convert type enum to string
     const char *type_str;
     if (type == OBJ_BLOB) type_str = "blob";
     else if (type == OBJ_TREE) type_str = "tree";
     else if (type == OBJ_COMMIT) type_str = "commit";
     else return -1;
 
-    // Step 2: create header
     char header[64];
     int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
+    if (header_len < 0 || header_len >= (int)sizeof(header)) return -1;
 
-    // Step 3: allocate full object buffer
-    size_t total_size = header_len + 1 + len;
+    size_t total_size = (size_t)header_len + 1 + len;
     unsigned char *full = malloc(total_size);
     if (!full) return -1;
 
-    // Step 4: copy header + null + data
     memcpy(full, header, header_len);
     full[header_len] = '\0';
     memcpy(full + header_len + 1, data, len);
+
     compute_hash(full, total_size, id_out);
-    // TEMP RETURN (we haven't implemented rest yet) compute hash of full object
-   if (object_exists(id_out)) {
-    free(full);
-    return 0;
-}
-   char path[512];
-object_path(id_out, path, sizeof(path));
+    if (object_exists(id_out)) {
+        free(full);
+        return 0;
+    }
 
-// Extract directory path (.pes/objects/XX)
-char dir[512];
-//strncpy(dir, path, sizeof(dir));
-snprintf(dir, sizeof(dir), "%s", path);
+    char path[512];
+    object_path(id_out, path, sizeof(path));
 
-char *slash = strrchr(dir, '/');
-if (!slash) {
-    free(full);
-    return -1;
-}
-*slash = '\0';
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) {
+        free(full);
+        return -1;
+    }
+    *slash = '\0';
 
-// Step 8: create directory if not exists
-mkdir(dir, 0755);
+    if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
+        free(full);
+        return -1;
+    }
 
-// Step 9: write file
-int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-if (fd < 0) {
-    free(full);
-    return -1;
-}
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    char temp_path[576];
+    int temp_len = snprintf(temp_path, sizeof(temp_path), "%s/.tmp_%s", dir, hex + 2);
+    if (temp_len < 0 || temp_len >= (int)sizeof(temp_path)) {
+        free(full);
+        return -1;
+    }
 
-if (write(fd, full, total_size) != (ssize_t)total_size) {
-    close(fd);
-    free(full);
-    return -1;
-}
+    int fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        free(full);
+        return -1;
+    }
 
-close(fd);
+    ssize_t written = write(fd, full, total_size);
+    if (written != (ssize_t)total_size || fsync(fd) < 0) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(temp_path);
+        free(full);
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (close(fd) < 0) {
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
+    if (rename(temp_path, path) < 0) {
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
+    int dirfd = open(dir, O_RDONLY);
+    if (dirfd < 0) {
+        free(full);
+        return -1;
+    }
+    if (fsync(dirfd) < 0) {
+        int saved_errno = errno;
+        close(dirfd);
+        free(full);
+        errno = saved_errno;
+        return -1;
+    }
+    close(dirfd);
+
     free(full);
     return 0;
 }
