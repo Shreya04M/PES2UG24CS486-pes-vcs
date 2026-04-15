@@ -147,15 +147,36 @@ int index_status(const Index *index) {
 int index_load(Index *index) {
     if (!index) return -1;
 
-    // Step 1 (Phase 3): just detect whether the index file exists.
-    // We will parse entries in the next step.
-    index->count = 0;
-
     FILE *f = fopen(INDEX_FILE, "r");
     if (!f) {
-        // No index yet => empty staging area.
-        if (errno == ENOENT) return 0;
+        if (errno == ENOENT) {
+            index->count = 0;
+            return 0;
+        }
         return -1;
+    }
+
+    index->count = 0;
+
+    while (!feof(f)) {
+        IndexEntry e;
+        char hex[HASH_HEX_SIZE + 1];
+
+        if (fscanf(f, "%o %64s %llu %u %s\n",
+                   &e.mode,
+                   hex,
+                   &e.mtime_sec,
+                   &e.size,
+                   e.path) != 5) {
+            break;
+        }
+
+        if (hex_to_hash(hex, &e.hash) != 0) {
+            fclose(f);
+            return -1;
+        }
+
+        index->entries[index->count++] = e;
     }
 
     fclose(f);
