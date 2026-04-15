@@ -116,6 +116,11 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     memcpy(full + header_len + 1, data, len);
     compute_hash(full, total_size, id_out);
     // TEMP RETURN (we haven't implemented rest yet) compute hash of full object
+   if (object_exists(id_out)) {
+    free(full);
+    return 0;
+}
+   
     free(full);
     return -1;
 }
