@@ -120,9 +120,38 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     free(full);
     return 0;
 }
-   
+   char path[512];
+object_path(id_out, path, sizeof(path));
+
+// Extract directory path (.pes/objects/XX)
+char dir[512];
+strncpy(dir, path, sizeof(dir));
+char *slash = strrchr(dir, '/');
+if (!slash) {
     free(full);
     return -1;
+}
+*slash = '\0';
+
+// Step 8: create directory if not exists
+mkdir(dir, 0755);
+
+// Step 9: write file
+int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+if (fd < 0) {
+    free(full);
+    return -1;
+}
+
+if (write(fd, full, total_size) != (ssize_t)total_size) {
+    close(fd);
+    free(full);
+    return -1;
+}
+
+close(fd);
+    free(full);
+    return 0;
 }
 
 // Read an object from the store.
