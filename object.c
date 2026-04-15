@@ -116,6 +116,12 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     // Step 2: hash the FULL object (header + '\0' + data)
     compute_hash(full, total_size, id_out);
 
+    // Step 3: deduplication — if we already have this object, we're done.
+    if (object_exists(id_out)) {
+        free(full);
+        return 0;
+    }
+
     // Next commit: dedup check and on-disk atomic write.
     free(full);
     return -1;
