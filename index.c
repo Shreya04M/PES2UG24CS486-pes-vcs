@@ -25,15 +25,6 @@
 #include <unistd.h>
 #include <dirent.h>
 
-// Forward declaration (implemented in object.c)
-int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
-
-static int compare_index_entries_by_path(const void *a, const void *b) {
-    const IndexEntry *ea = (const IndexEntry *)a;
-    const IndexEntry *eb = (const IndexEntry *)b;
-    return strcmp(ea->path, eb->path);
-}
-
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -147,149 +138,36 @@ int index_status(const Index *index) {
 int index_load(Index *index) {
     if (!index) return -1;
 
+    // Phase 3 — Step 1:
+    // - If .pes/index doesn't exist, treat it as an empty index.
+    // - Do not parse entries yet.
+    index->count = 0;
+
     FILE *f = fopen(INDEX_FILE, "r");
     if (!f) {
-        if (errno == ENOENT) {
-            index->count = 0;
-            index->entries = NULL;
-            return 0;
-        }
+        if (errno == ENOENT) return 0;
         return -1;
-    }
-
-    index->count = 0;
-    index->entries = NULL;
-
-    while (1) {
-        IndexEntry e;
-        char hex[HASH_HEX_SIZE + 1];
-
-        if (fscanf(f, "%o %64s %llu %u %s",
-                   &e.mode,
-                   hex,
-                   &e.mtime_sec,
-                   &e.size,
-                   e.path) != 5) {
-            break;
-        }
-
-        if (hex_to_hash(hex, &e.hash) != 0) {
-            fclose(f);
-            return -1;
-        }
-
-        // 🔥 allocate memory
-        IndexEntry *new_entries = realloc(index->entries, (index->count + 1) * sizeof(IndexEntry));
-        if (!new_entries) {
-            fclose(f);
-            return -1;
-        }
-
-        index->entries = new_entries;
-        index->entries[index->count++] = e;
     }
 
     fclose(f);
     return 0;
 }
-    if (!index) return -1;
-
-    FILE *f = fopen(INDEX_FILE, "r");
-    if (!f) {
-        if (errno == ENOENT) {
-            index->count = 0;
-            return 0;
-        }
-        return -1;
-    }
-
-    index->count = 0;
-
-    while (!feof(f)) {
-        IndexEntry e;
-        char hex[HASH_HEX_SIZE + 1];
-
-        if (fscanf(f, "%o %64s %llu %u %s\n",
-                   &e.mode,
-                   hex,
-                   &e.mtime_sec,
-                   &e.size,
-                   e.path) != 5) {
-            break;
-        }
-
-        if (hex_to_hash(hex, &e.hash) != 0) {
-            fclose(f);
-            return -1;
-        }
-
-        index->entries[index->count++] = e;
-    }
-
-    fclose(f);
-    return 0;
 
 // Save the index to .pes/index atomically.
 //
-// HINTS - Useful functions and syscalls:
-//   - qsort                            : sorting the entries array by path
-//   - fopen (with "w"), fprintf        : writing to the temporary file
-//   - hash_to_hex                      : converting ObjectID for text output
-//   - fflush, fileno, fsync, fclose    : flushing userspace buffers and syncing to disk
-//   - rename                           : atomically moving the temp file over the old index
-//
 // Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
-    if (!index) return -1;
+    // TODO: Implement atomic index saving (temp file + rename)
+    (void)index;
+    return -1;
+}
 
-    if (mkdir(PES_DIR, 0755) < 0 && errno != EEXIST) return -1;
-
-    Index sorted = *index;
-    if (sorted.count > 1) {
-        qsort(sorted.entries, (size_t)sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
-    }
-
-    char tmp_path[512];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
-
-    FILE *f = fopen(tmp_path, "w");
-        if (!index) return -1;
-
-        // Phase 3 (Step 1): only check if the index file exists.
-        // Do not parse entries yet.
-        index->count = 0;
-
-        FILE *f = fopen(INDEX_FILE, "r");
-        if (!f) {
-            if (errno == ENOENT) return 0; // no index yet => empty staging area
-            return -1;
-        }
-
-        fclose(f);
-        return 0;
-    fclose(f);
-
-    ObjectID blob;
-    if (object_write(OBJ_BLOB, buf, len, &blob) != 0) {
-        free(buf);
-        return -1;
-    }
-    free(buf);
-
-    uint32_t mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
-
-    IndexEntry *e = index_find(index, path);
-    if (!e) {
-        if (index->count >= MAX_INDEX_ENTRIES) return -1;
-        e = &index->entries[index->count++];
-        int n = snprintf(e->path, sizeof(e->path), "%s", path);
-        if (n < 0 || n >= (int)sizeof(e->path)) return -1;
-    }
-
-    e->mode = mode;
-    e->hash = blob;
-    e->mtime_sec = (uint64_t)st.st_mtime;
-    e->size = (uint32_t)st.st_size;
-
-    return index_save(index);
+// Stage a file for the next commit.
+//
+// Returns 0 on success, -1 on error.
+int index_add(Index *index, const char *path) {
+    // TODO: Implement file staging (write blob + update entry + save)
+    (void)index;
+    (void)path;
+    return -1;
 }
