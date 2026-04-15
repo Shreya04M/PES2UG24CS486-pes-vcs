@@ -141,7 +141,43 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    // Next commit: write to temp file + fsync + rename.
+    // Step 5: write to a temporary file in the shard directory
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+
+    char temp_path[576];
+    int temp_len = snprintf(temp_path, sizeof(temp_path), "%s/.tmp_%s", dir, hex + 2);
+    if (temp_len < 0 || temp_len >= (int)sizeof(temp_path)) {
+        free(full);
+        return -1;
+    }
+
+    int fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        free(full);
+        return -1;
+    }
+
+    size_t off = 0;
+    while (off < total_size) {
+        ssize_t n = write(fd, full + off, total_size - off);
+        if (n <= 0) {
+            close(fd);
+            unlink(temp_path);
+            free(full);
+            return -1;
+        }
+        off += (size_t)n;
+    }
+
+    if (close(fd) < 0) {
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
+    // Next commit: fsync(temp file) + rename(temp -> final) for atomic write.
+    unlink(temp_path);
     free(full);
     return -1;
 }
