@@ -253,89 +253,20 @@ int index_save(const Index *index) {
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
 
     FILE *f = fopen(tmp_path, "w");
-    if (!f) return -1;
+        if (!index) return -1;
 
-    for (int i = 0; i < sorted.count; i++) {
-        char hex[HASH_HEX_SIZE + 1];
-        hash_to_hex(&sorted.entries[i].hash, hex);
-        if (fprintf(f, "%o %s %llu %u %s\n",
-                    sorted.entries[i].mode,
-                    hex,
-                    (unsigned long long)sorted.entries[i].mtime_sec,
-                    (unsigned int)sorted.entries[i].size,
-                    sorted.entries[i].path) < 0) {
-            fclose(f);
-            unlink(tmp_path);
+        // Phase 3 (Step 1): only check if the index file exists.
+        // Do not parse entries yet.
+        index->count = 0;
+
+        FILE *f = fopen(INDEX_FILE, "r");
+        if (!f) {
+            if (errno == ENOENT) return 0; // no index yet => empty staging area
             return -1;
         }
-    }
 
-    if (fflush(f) != 0) {
         fclose(f);
-        unlink(tmp_path);
-        return -1;
-    }
-    if (fsync(fileno(f)) != 0) {
-        fclose(f);
-        unlink(tmp_path);
-        return -1;
-    }
-    if (fclose(f) != 0) {
-        unlink(tmp_path);
-        return -1;
-    }
-
-    if (rename(tmp_path, INDEX_FILE) != 0) {
-        unlink(tmp_path);
-        return -1;
-    }
-
-    int dirfd = open(PES_DIR, O_RDONLY);
-    if (dirfd < 0) return -1;
-    int rc = fsync(dirfd);
-    close(dirfd);
-    return (rc == 0) ? 0 : -1;
-}
-
-// Stage a file for the next commit.
-//
-// HINTS - Useful functions and syscalls:
-//   - fopen, fread, fclose             : reading the target file's contents
-//   - object_write                     : saving the contents as OBJ_BLOB
-//   - stat / lstat                     : getting file metadata (size, mtime, mode)
-//   - index_find                       : checking if the file is already staged
-//
-// Returns 0 on success, -1 on error.
-int index_add(Index *index, const char *path) {
-    if (!index || !path || !path[0]) return -1;
-
-    struct stat st;
-    if (lstat(path, &st) != 0) return -1;
-    if (!S_ISREG(st.st_mode)) return -1;
-
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-
-    size_t len = (size_t)st.st_size;
-    void *buf = NULL;
-    if (len == 0) {
-        buf = malloc(1);
-        if (!buf) {
-            fclose(f);
-            return -1;
-        }
-    } else {
-        buf = malloc(len);
-        if (!buf) {
-            fclose(f);
-            return -1;
-        }
-        if (fread(buf, 1, len, f) != len) {
-            free(buf);
-            fclose(f);
-            return -1;
-        }
-    }
+        return 0;
     fclose(f);
 
     ObjectID blob;
