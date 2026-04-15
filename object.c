@@ -183,10 +183,16 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    // Next commit: fsync(temp file) + rename(temp -> final) for atomic write.
-    unlink(temp_path);
+    // Step 7: atomically publish the object
+    if (rename(temp_path, path) < 0) {
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
+    // Next commit: fsync() the shard directory to persist the rename.
     free(full);
-    return -1;
+    return 0;
 }
 
 // Read an object from the store.
