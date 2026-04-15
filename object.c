@@ -170,6 +170,13 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         off += (size_t)n;
     }
 
+    if (fsync(fd) < 0) {
+        close(fd);
+        unlink(temp_path);
+        free(full);
+        return -1;
+    }
+
     if (close(fd) < 0) {
         unlink(temp_path);
         free(full);
