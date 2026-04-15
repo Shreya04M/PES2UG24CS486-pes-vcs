@@ -34,6 +34,12 @@ static int compare_index_entries_by_path(const void *a, const void *b) {
     return strcmp(ea->path, eb->path);
 }
 
+static int compare_index_entry_ptrs_by_path(const void *a, const void *b) {
+    const IndexEntry *ea = *(const IndexEntry * const *)a;
+    const IndexEntry *eb = *(const IndexEntry * const *)b;
+    return strcmp(ea->path, eb->path);
+}
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -193,9 +199,19 @@ int index_save(const Index *index) {
 
     if (mkdir(PES_DIR, 0755) < 0 && errno != EEXIST) return -1;
 
-    Index sorted = *index;
-    if (sorted.count > 1) {
-        qsort(sorted.entries, (size_t)sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
+    int count = index->count;
+    if (count < 0 || count > MAX_INDEX_ENTRIES) return -1;
+
+    IndexEntry **order = NULL;
+    if (count > 0) {
+        order = malloc((size_t)count * sizeof(*order));
+        if (!order) return -1;
+        for (int i = 0; i < count; i++) {
+            order[i] = (IndexEntry *)&index->entries[i];
+        }
+        if (count > 1) {
+            qsort(order, (size_t)count, sizeof(*order), compare_index_entry_ptrs_by_path);
+        }
     }
 
     char tmp_path[512];
@@ -204,20 +220,24 @@ int index_save(const Index *index) {
     FILE *f = fopen(tmp_path, "w");
     if (!f) return -1;
 
-    for (int i = 0; i < sorted.count; i++) {
+    for (int i = 0; i < count; i++) {
+        const IndexEntry *entry = (count > 0) ? order[i] : NULL;
         char hex[HASH_HEX_SIZE + 1];
-        hash_to_hex(&sorted.entries[i].hash, hex);
+        hash_to_hex(&entry->hash, hex);
         if (fprintf(f, "%o %s %llu %u %s\n",
-                    (unsigned int)sorted.entries[i].mode,
+                    (unsigned int)entry->mode,
                     hex,
-                    (unsigned long long)sorted.entries[i].mtime_sec,
-                    (unsigned int)sorted.entries[i].size,
-                    sorted.entries[i].path) < 0) {
+                    (unsigned long long)entry->mtime_sec,
+                    (unsigned int)entry->size,
+                    entry->path) < 0) {
             fclose(f);
             unlink(tmp_path);
+            free(order);
             return -1;
         }
     }
+
+    free(order);
 
     if (fflush(f) != 0) {
         fclose(f);

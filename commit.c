@@ -288,27 +288,42 @@ void cmd_add(int argc, char *argv[]) {
         return;
     }
 
-    Index idx;
-    if (index_load(&idx) != 0) {
+    Index *idx = malloc(sizeof(*idx));
+    if (!idx) {
+        fprintf(stderr, "error: out of memory\n");
+        return;
+    }
+
+    if (index_load(idx) != 0) {
         fprintf(stderr, "error: failed to load index\n");
+        free(idx);
         return;
     }
 
     for (int i = 2; i < argc; i++) {
-        if (index_add(&idx, argv[i]) != 0) {
+        if (index_add(idx, argv[i]) != 0) {
             fprintf(stderr, "error: failed to add '%s'\n", argv[i]);
+            free(idx);
             return;
         }
     }
+
+    free(idx);
 }
 
 void cmd_status(void) {
-    Index idx;
-    if (index_load(&idx) != 0) {
-        fprintf(stderr, "error: failed to load index\n");
+    Index *idx = malloc(sizeof(*idx));
+    if (!idx) {
+        fprintf(stderr, "error: out of memory\n");
         return;
     }
-    (void)index_status(&idx);
+    if (index_load(idx) != 0) {
+        fprintf(stderr, "error: failed to load index\n");
+        free(idx);
+        return;
+    }
+    (void)index_status(idx);
+    free(idx);
 }
 
 void cmd_commit(int argc, char *argv[]) {
