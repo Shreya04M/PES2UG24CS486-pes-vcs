@@ -232,7 +232,88 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    if (!id || !type_out || !data_out || !len_out) return -1;
+
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return -1;
+    }
+    long sz = ftell(f);
+    if (sz < 0) {
+        fclose(f);
+        return -1;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    unsigned char *buf = malloc((size_t)sz);
+    if (!buf) {
+        fclose(f);
+        return -1;
+    }
+
+    size_t nread = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (nread != (size_t)sz) {
+        free(buf);
+        return -1;
+    }
+
+    unsigned char *nul = memchr(buf, '\0', nread);
+    if (!nul) {
+        free(buf);
+        return -1;
+    }
+    size_t header_len = (size_t)(nul - buf);
+
+    char *header = malloc(header_len + 1);
+    if (!header) {
+        free(buf);
+        return -1;
+    }
+    memcpy(header, buf, header_len);
+    header[header_len] = '\0';
+
+    char type_str[16];
+    size_t declared_size = 0;
+    if (sscanf(header, "%15s %zu", type_str, &declared_size) != 2) {
+        free(header);
+        free(buf);
+        return -1;
+    }
+    free(header);
+
+    if (strcmp(type_str, "blob") == 0) *type_out = OBJ_BLOB;
+    else if (strcmp(type_str, "tree") == 0) *type_out = OBJ_TREE;
+    else if (strcmp(type_str, "commit") == 0) *type_out = OBJ_COMMIT;
+    else {
+        free(buf);
+        return -1;
+    }
+
+    size_t data_len = nread - (header_len + 1);
+    if (declared_size != data_len) {
+        free(buf);
+        return -1;
+    }
+
+    void *out = malloc(data_len);
+    if (!out) {
+        free(buf);
+        return -1;
+    }
+    memcpy(out, nul + 1, data_len);
+    free(buf);
+
+    *data_out = out;
+    *len_out = data_len;
+    return 0;
 }
