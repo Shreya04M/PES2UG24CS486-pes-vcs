@@ -92,7 +92,8 @@ static int compare_tree_entries(const void *a, const void *b) {
 // Returns 0 on success, -1 on error.
 int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
     // Estimate max size: (6 bytes mode + 1 byte space + 256 bytes name + 1 byte null + 32 bytes hash) per entry
-    size_t max_size = tree->count * 296; 
+    size_t max_size = tree->count * 296;
+    if (max_size == 0) max_size = 1;
     uint8_t *buffer = malloc(max_size);
     if (!buffer) return -1;
 
@@ -199,34 +200,7 @@ int tree_from_index(ObjectID *id_out) {
     if (!id_out) return -1;
 
     Index index = {0};
-    FILE *f = fopen(INDEX_FILE, "r");
-    if (!f) return -1;
-
-    while (index.count < MAX_INDEX_ENTRIES) {
-        unsigned int mode = 0;
-        char hex[HASH_HEX_SIZE + 1];
-        unsigned long long mtime_sec = 0;
-        unsigned int size = 0;
-        char path[512];
-
-        int rc = fscanf(f, "%o %64s %llu %u %511s\n", &mode, hex, &mtime_sec, &size, path);
-        if (rc == EOF) break;
-        if (rc != 5) {
-            fclose(f);
-            return -1;
-        }
-
-        IndexEntry *e = &index.entries[index.count++];
-        e->mode = mode;
-        e->mtime_sec = (uint64_t)mtime_sec;
-        e->size = (uint32_t)size;
-        snprintf(e->path, sizeof(e->path), "%s", path);
-        if (hex_to_hash(hex, &e->hash) != 0) {
-            fclose(f);
-            return -1;
-        }
-    }
-    fclose(f);
+    if (index_load(&index) != 0) return -1;
 
     return write_tree_level(&index, "", id_out);
 }
